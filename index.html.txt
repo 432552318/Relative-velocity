@@ -1,0 +1,293 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<title>相対速度チェッカー</title>
+<style>
+  body {
+    font-family: sans-serif;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    padding: 20px;
+  }
+  canvas { 
+    border: 1px solid #000; 
+    background:#f0f0f0; 
+    width: 600px;
+    height: 400px;
+    box-shadow: 0 4px 8px rgba(0,0,0,0.1);
+  }
+  input { 
+    width: 50px; 
+    padding: 5px;
+    margin-right: 5px;
+  }
+  button {
+    padding: 8px 15px;
+    margin: 5px;
+    border: none;
+    border-radius: 5px;
+    background-color: #4CAF50;
+    color: white;
+    cursor: pointer;
+    font-size: 14px;
+  }
+  button:hover {
+    background-color: #45a049;
+  }
+  #llmOutput {
+    margin-top: 20px;
+    padding: 15px;
+    border: 1px solid #ddd;
+    border-radius: 8px;
+    width: 600px;
+    min-height: 50px;
+    background-color: #f9f9f9;
+  }
+</style>
+</head>
+<body>
+<h2>相対速度チェッカー</h2>
+
+<p>
+Aの速度: <input id="vA" type="number" value="2"> m/s
+角度: <input id="thetaA" type="number" value="45">°<br>
+Bの速度: <input id="vB" type="number" value="1"> m/s
+角度: <input id="thetaB" type="number" value="0">°
+<button id="update">更新</button>
+<button id="bView">B視点に切替</button>
+<button id="reset">リセット</button>
+<button id="pauseResume">一時停止</button>
+</p>
+
+<canvas id="canvas" width="600" height="400"></canvas>
+<p id="result"></p>
+
+<div style="margin-top: 20px;">
+  <button id="explainButton">相対速度を解説する ✨</button>
+  <button id="exampleButton">具体例を生成する ✨</button>
+</div>
+
+<div id="llmOutput">
+  ここに解説や具体的な例が表示されます。
+</div>
+
+<script>
+const canvas = document.getElementById('canvas');
+const ctx = canvas.getContext('2d');
+
+let Ax = 100, Ay = 300;
+let Bx = 300, By = 300;
+
+let vA = 2, thetaA = 45;
+let vB = 1, thetaB = 0;
+
+let vAx = 0, vAy = 0;
+let vBx = 0, vBy = 0;
+
+let bViewMode = false;
+let isPaused = false;
+
+// API key is empty as per instructions, Canvas will provide it
+const apiKey = ""; 
+const apiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-05-20:generateContent?key=${apiKey}`;
+
+function deg2rad(d) { return d*Math.PI/180; }
+function updateVelocity() {
+  vAx = vA*Math.cos(deg2rad(thetaA));
+  vAy = -vA*Math.sin(deg2rad(thetaA)); // CanvasのY軸は下方向
+  vBx = vB*Math.cos(deg2rad(thetaB));
+  vBy = -vB*Math.sin(deg2rad(thetaB));
+}
+
+function drawArrow(x, y, dx, dy, color) {
+  ctx.strokeStyle = color;
+  ctx.fillStyle = color;
+  ctx.beginPath();
+  ctx.moveTo(x, y);
+  ctx.lineTo(x+dx, y+dy);
+  ctx.stroke();
+  // 矢印先端
+  const angle = Math.atan2(dy, dx);
+  const len = 10;
+  ctx.beginPath();
+  ctx.moveTo(x+dx, y+dy);
+  ctx.lineTo(x+dx-len*Math.cos(angle-Math.PI/6), y+dy-len*Math.sin(angle-Math.PI/6));
+  ctx.lineTo(x+dx-len*Math.cos(angle+Math.PI/6), y+dy-len*Math.sin(angle+Math.PI/6));
+  ctx.lineTo(x+dx, y+dy);
+  ctx.fill();
+}
+
+function draw() {
+  if (!isPaused) {
+    ctx.clearRect(0,0,canvas.width,canvas.height);
+
+    // アニメーションの速度調整
+    const maxV = Math.max(vA, vB);
+    const animationScale = maxV > 5 ? 5 / maxV : 1;
+    const arrowScale = 20;
+
+    // B視点モードならBを固定
+    let drawAx = bViewMode ? Ax - Bx + canvas.width/2 : Ax;
+    let drawAy = bViewMode ? Ay - By + canvas.height/2 : Ay;
+    let drawBx = bViewMode ? canvas.width/2 : Bx;
+    let drawBy = bViewMode ? canvas.height/2 : By;
+
+    // 点描画
+    ctx.fillStyle='blue';
+    ctx.beginPath();
+    ctx.arc(drawAx, drawAy, 8, 0, Math.PI*2);
+    ctx.fill();
+
+    ctx.fillStyle='red';
+    ctx.beginPath();
+    ctx.arc(drawBx, drawBy, 8, 0, Math.PI*2);
+    ctx.fill();
+
+    // 相対速度ベクトル
+    const vRelX = vAx - vBx;
+    const vRelY = vAy - vBy;
+
+    // ベクトル描画はアニメーション速度とは別のスケールを使用
+    drawArrow(drawAx, drawAy, vRelX*arrowScale, vRelY*arrowScale, 'green');
+    drawArrow(drawAx, drawAy, vAx*arrowScale, vAy*arrowScale, 'blue');
+    drawArrow(drawBx, drawBy, vBx*arrowScale, vBy*arrowScale, 'red');
+
+    // 座標更新にアニメーションスケールを適用
+    Ax += vAx * animationScale;
+    Ay += vAy * animationScale;
+    Bx += vBx * animationScale;
+    By += vBy * animationScale;
+
+    // 枠内での繰り返し処理
+    if (Ax > canvas.width) Ax = 0;
+    if (Ax < 0) Ax = canvas.width;
+    if (Ay > canvas.height) Ay = 0;
+    if (Ay < 0) Ay = canvas.height;
+    if (Bx > canvas.width) Bx = 0;
+    if (Bx < 0) Bx = canvas.width;
+    if (By > canvas.height) By = 0;
+    if (By < 0) By = canvas.height;
+
+    // 数値結果表示
+    const speed = Math.sqrt(vRelX*vRelX + vRelY*vRelY).toFixed(2);
+    const angle = (-Math.atan2(vRelY, vRelX)*180/Math.PI).toFixed(1);
+    document.getElementById('result').innerText = `Bから見たAの相対速度: ${speed} m/s, 角度: ${angle}°`;
+  }
+
+  requestAnimationFrame(draw);
+}
+
+// 初期速度設定
+updateVelocity();
+draw();
+
+document.getElementById('update').onclick = () => {
+  vA = parseFloat(document.getElementById('vA').value);
+  thetaA = parseFloat(document.getElementById('thetaA').value);
+  vB = parseFloat(document.getElementById('vB').value);
+  thetaB = parseFloat(document.getElementById('thetaB').value);
+  updateVelocity();
+}
+
+document.getElementById('bView').onclick = () => {
+  bViewMode = !bViewMode;
+}
+
+const resetButton = document.getElementById('reset');
+resetButton.onclick = () => {
+    Ax = canvas.width / 2;
+    Ay = canvas.height / 2;
+    Bx = canvas.width / 2;
+    By = canvas.height / 2;
+};
+
+const pauseResumeButton = document.getElementById('pauseResume');
+pauseResumeButton.onclick = () => {
+  isPaused = !isPaused;
+  if (isPaused) {
+    pauseResumeButton.innerText = '再開';
+    resetButton.click();
+  } else {
+    pauseResumeButton.innerText = '一時停止';
+  }
+};
+
+const explainButton = document.getElementById('explainButton');
+const exampleButton = document.getElementById('exampleButton');
+const llmOutput = document.getElementById('llmOutput');
+
+explainButton.onclick = async () => {
+  llmOutput.innerText = '解説を生成中...';
+  const vRelX = vAx - vBx;
+  const vRelY = vAy - vBy;
+  const vRel = Math.sqrt(vRelX*vRelX + vRelY*vRelY).toFixed(2);
+  const angleRel = (-Math.atan2(vRelY, vRelX)*180/Math.PI).toFixed(1);
+
+  const userQuery = `物理学の相対速度について、高校生向けに簡潔に説明してください。
+    - 物体Aの速度: ${vA} m/s、角度: ${thetaA}°
+    - 物体Bの速度: ${vB} m/s、角度: ${thetaB}°
+    - 計算されたBから見たAの相対速度: ${vRel} m/s、角度: ${angleRel}°
+    - この結果が具体的に何を意味するのかを分かりやすく解説してください。`;
+  
+  const payload = {
+      contents: [{ parts: [{ text: userQuery }] }],
+      tools: [{ "google_search": {} }],
+      systemInstruction: {
+          parts: [{ text: "あなたはプロの物理教師です。生徒がよく理解できるように、複雑な概念をシンプルかつ正確に説明してください。" }]
+      },
+  };
+
+  try {
+      const response = await fetch(apiUrl, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload)
+      });
+      const result = await response.json();
+      const text = result?.candidates?.[0]?.content?.parts?.[0]?.text || "エラー: 解説を生成できませんでした。";
+      llmOutput.innerText = text;
+  } catch (error) {
+      console.error('API Error:', error);
+      llmOutput.innerText = 'エラー: 解説を生成できませんでした。';
+  }
+};
+
+exampleButton.onclick = async () => {
+  llmOutput.innerText = '具体例を生成中...';
+  const vRelX = vAx - vBx;
+  const vRelY = vAy - vBy;
+  const vRel = Math.sqrt(vRelX*vRelX + vRelY*vRelY).toFixed(2);
+  const angleRel = (-Math.atan2(vRelY, vRelX)*180/Math.PI).toFixed(1);
+
+  const userQuery = `以下の相対速度のシナリオに一致する、具体的な現実世界の例を一つ生成してください。
+    - 物体Aの速度: ${vA} m/s、角度: ${thetaA}°
+    - 物体Bの速度: ${vB} m/s、角度: ${thetaB}°
+    - Bから見たAの相対速度: ${vRel} m/s、角度: ${angleRel}°`;
+  
+  const payload = {
+      contents: [{ parts: [{ text: userQuery }] }],
+      tools: [{ "google_search": {} }],
+      systemInstruction: {
+          parts: [{ text: "あなたはプロの物理教師です。生徒が概念を理解できるよう、身近で分かりやすい例を提供してください。" }]
+      },
+  };
+
+  try {
+      const response = await fetch(apiUrl, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload)
+      });
+      const result = await response.json();
+      const text = result?.candidates?.[0]?.content?.parts?.[0]?.text || "エラー: 具体例を生成できませんでした。";
+      llmOutput.innerText = text;
+  } catch (error) {
+      console.error('API Error:', error);
+      llmOutput.innerText = 'エラー: 具体例を生成できませんでした。';
+  }
+};
+</script>
+</body>
+</html>
